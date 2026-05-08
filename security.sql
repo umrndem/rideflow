@@ -51,6 +51,8 @@ GRANT SELECT ON rideflow_db.vw_refund_dispute_totals TO 'rideflow_rider_role';
 -- Driver role: manage availability/vehicles, handle assigned rides, and view earnings context.
 GRANT SELECT, UPDATE ON rideflow_db.users TO 'rideflow_driver_role';
 GRANT SELECT, UPDATE ON rideflow_db.drivers TO 'rideflow_driver_role';
+GRANT SELECT, UPDATE ON rideflow_db.user_wallets TO 'rideflow_driver_role';
+GRANT SELECT, INSERT ON rideflow_db.driver_payout_requests TO 'rideflow_driver_role';
 GRANT SELECT, INSERT, UPDATE ON rideflow_db.vehicles TO 'rideflow_driver_role';
 GRANT SELECT ON rideflow_db.locations TO 'rideflow_driver_role';
 GRANT SELECT ON rideflow_db.location_distances TO 'rideflow_driver_role';

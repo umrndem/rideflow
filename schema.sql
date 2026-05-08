@@ -12,6 +12,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 
 DROP TABLE IF EXISTS ride_history;
 DROP TABLE IF EXISTS admin_notifications;
+DROP TABLE IF EXISTS driver_payout_requests;
 DROP TABLE IF EXISTS rider_warnings;
 DROP TABLE IF EXISTS driver_review_flags;
 DROP TABLE IF EXISTS complaints;
@@ -61,7 +62,7 @@ CREATE TABLE wallet_transactions (
   wallet_transaction_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   wallet_id BIGINT UNSIGNED NOT NULL,
   ride_id BIGINT UNSIGNED NULL,
-  transaction_type ENUM('top_up', 'ride_payment', 'refund', 'adjustment') NOT NULL,
+  transaction_type ENUM('top_up', 'ride_payment', 'refund', 'adjustment', 'driver_earning', 'payout') NOT NULL,
   amount DECIMAL(10,2) NOT NULL,
   balance_after DECIMAL(10,2) NOT NULL,
   description VARCHAR(255) NULL,
@@ -161,6 +162,7 @@ CREATE TABLE drivers (
   profile_photo VARCHAR(255) NULL,
   current_city VARCHAR(100) NOT NULL,
   current_location_id BIGINT UNSIGNED NULL,
+  location_updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   verification_status ENUM('pending', 'verified', 'rejected') NOT NULL DEFAULT 'pending',
   availability_status ENUM('online', 'offline', 'on_trip') NOT NULL DEFAULT 'offline',
   total_trips_completed INT UNSIGNED NOT NULL DEFAULT 0,
@@ -181,6 +183,29 @@ CREATE TABLE drivers (
     ON UPDATE CASCADE
     ON DELETE SET NULL,
   CONSTRAINT chk_drivers_average_rating CHECK (average_rating >= 0 AND average_rating <= 5)
+) ENGINE=InnoDB;
+
+CREATE TABLE driver_payout_requests (
+  payout_request_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  driver_id BIGINT UNSIGNED NOT NULL,
+  amount DECIMAL(10,2) NOT NULL,
+  status ENUM('pending', 'paid', 'rejected') NOT NULL DEFAULT 'pending',
+  notes VARCHAR(255) NULL,
+  requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  processed_at DATETIME NULL,
+  processed_by_user_id BIGINT UNSIGNED NULL,
+  INDEX idx_driver_payout_requests_driver (driver_id),
+  INDEX idx_driver_payout_requests_status (status),
+  INDEX idx_driver_payout_requests_requested_at (requested_at),
+  CONSTRAINT fk_driver_payout_requests_driver
+    FOREIGN KEY (driver_id) REFERENCES drivers(driver_id)
+    ON UPDATE CASCADE
+    ON DELETE CASCADE,
+  CONSTRAINT fk_driver_payout_requests_processed_by
+    FOREIGN KEY (processed_by_user_id) REFERENCES users(user_id)
+    ON UPDATE CASCADE
+    ON DELETE SET NULL,
+  CONSTRAINT chk_driver_payout_requests_amount CHECK (amount > 0)
 ) ENGINE=InnoDB;
 
 CREATE TABLE vehicles (

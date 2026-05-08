@@ -159,6 +159,7 @@ CALL sp_calculate_fare(
   45.00,
   8.00,
   NULL,
+  NOW(),
   @base_fare,
   @surge_multiplier,
   @discount_amount,

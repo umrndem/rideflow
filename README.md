@@ -9,10 +9,11 @@ The front end is a fast, multi-role web app served by an Express API. The backen
 ## Highlights
 
 - Three distinct dashboards (rider, driver, admin) that feel like real product surfaces.
-- Pricing engine with surge, promo logic, and wallet-aware validation.
+- Pricing engine with city and vehicle-based fare rules, automatic peak-hour surge, promo logic, and wallet-aware validation.
 - Live dashboards with automatic refresh and operations reporting.
 - End-to-end ride lifecycle with verification, acceptance, and completion flows.
-- Wallet + payments ledger with commission tracking and auditability.
+- Wallet + payments ledger with commission tracking, driver earning credits, payout requests, and auditability.
+- Mutual rider/driver ratings, complaint handling, refunds, and review flags for trust and safety workflows.
 - Database logic (procedures, triggers, views) designed to reflect platform-grade behavior.
 
 ---
@@ -20,7 +21,7 @@ The front end is a fast, multi-role web app served by an Express API. The backen
 ## Why It Feels Real
 
 - **Role-first UX**: each dashboard has its own navigation, metrics, and workflows.
-- **Operational rigor**: verification, flags, and reporting are built into the data model.
+- **Operational rigor**: verification, flags, complaints, refunds, and payout processing are built into the operating model.
 - **Data integrity**: constraints, checks, and triggers prevent invalid state.
 - **Fresh-start ready**: the project boots with a clean database state, an admin account, and the location graph needed for new signups and operations.
 
@@ -43,6 +44,7 @@ The current deployed demo is available on Railway:
 - Admin app: [https://rideflow.up.railway.app/admin/](https://rideflow.up.railway.app/admin/)
 
 Use the admin credentials listed below to configure the platform, then create rider and driver accounts through the signup flows.
+From there you can test the full flow: configure fare rules, sign up riders and drivers, approve driver and vehicle verification, book rides, move trips through their live states, rate both sides after completion, file complaints, issue refunds, and process driver payout requests.
 
 ---
 
@@ -71,7 +73,6 @@ This diagram shows the relationships between users, drivers, vehicles, rides, lo
 │   ├── js/
 │   │   ├── api.js
 │   │   ├── auth.js
-│   │   ├── admin.js
 │   │   ├── admin/
 │   │   │   ├── index.js
 │   │   │   ├── reports.js
@@ -80,13 +81,11 @@ This diagram shows the relationships between users, drivers, vehicles, rides, lo
 │   │   │   ├── vehicles.js
 │   │   │   ├── fareRules.js
 │   │   │   └── shared.js
-│   │   ├── driver.js
 │   │   ├── driver/
 │   │   │   ├── index.js
 │   │   │   ├── requests.js
 │   │   │   ├── trips.js
 │   │   │   └── earnings.js
-│   │   ├── rider.js
 │   │   ├── rider/
 │   │   │   ├── index.js
 │   │   │   ├── booking.js
@@ -138,7 +137,7 @@ This diagram shows the relationships between users, drivers, vehicles, rides, lo
   Creates the full relational schema, tables, keys, constraints, and base structure.
 
 - `logic.sql`  
-  Adds stored procedures, views, triggers, and event logic for pricing, automation, and business rules.
+  Adds stored procedures, views, triggers, and event logic for pricing, automation, ratings, disputes, payouts, and business rules.
 
 - `bootstrap.sql`  
   Loads the admin account and the reference location graph required for rider and driver flows without adding sample operational data.
@@ -217,7 +216,7 @@ This diagram shows the relationships between users, drivers, vehicles, rides, lo
   Ride booking UI, city/location flow, fare estimation, and current ride state.
 
 - `public/js/rider/history.js`  
-  Ride history rendering and driver rating flow.
+  Ride history rendering, driver rating flow, and rider complaint/report actions.
 
 - `public/js/rider/wallet.js`  
   Wallet balance, top-ups, and transaction history.
@@ -231,10 +230,10 @@ This diagram shows the relationships between users, drivers, vehicles, rides, lo
   Incoming ride offers, work area, and request actions.
 
 - `public/js/driver/trips.js`  
-  Active trip progression and trip history.
+  Active trip progression, driver live-location updates, rider rating flow, complaint actions, and trip history.
 
 - `public/js/driver/earnings.js`  
-  Earnings summaries and payout-oriented views.
+  Earnings summaries, wallet activity, payout request workflow, and additional vehicle registration.
 
 ### Admin Feature Modules
 
@@ -242,7 +241,7 @@ This diagram shows the relationships between users, drivers, vehicles, rides, lo
   Admin module barrel/export entry.
 
 - `public/js/admin/reports.js`  
-  Platform metrics, charts, and reporting views.
+  Platform metrics, charts, complaint handling, refund actions, payout processing, and reporting views.
 
 - `public/js/admin/users.js`  
   User management and status actions.
@@ -426,13 +425,13 @@ Before riders can book trips, configure fare rules from the admin panel for each
 ### Role-based UI
 The UI is a single app shell that adapts by audience:
 
-- Rider: booking, fare estimate, ride history, wallet
-- Driver: availability, requests, active trips, earnings
-- Admin: metrics, user and driver verification, fare rules, reporting
+- Rider: booking, fare estimate, live ride tracking, ride history, wallet, ratings, and complaints
+- Driver: availability, requests, active trips, live location updates, ratings, vehicles, earnings, and payouts
+- Admin: metrics, user and driver verification, fare rules, complaints, refunds, payout decisions, and reporting
 
 Audience is inferred by hostname, path, or the `rideflow-audience` meta tag. Local paths `/`, `/driver`, and `/admin` are supported.
 
-Role UI logic is modularized by section. The entry files (`admin.js`, `driver.js`, `rider.js`) re-export role renderers from their respective folders, and each section (like booking, trips, reports) lives in its own module for easier maintenance.
+Role UI logic is modularized by section. The shell imports the role renderers directly from the modular folders, and each section (like booking, trips, reports) lives in its own module for easier maintenance.
 
 ### Mobile and touch support
 There is no separate mobile app. The same UI adapts for touch and smaller screens using responsive CSS breakpoints and runtime device detection (`device.js`) that adds `is-mobile` and `is-touch` classes to the document.
@@ -446,7 +445,8 @@ There is no separate mobile app. The same UI adapts for touch and smaller screen
 Fare estimates and final fares are calculated by `sp_calculate_fare`, which applies:
 
 - Base + per km + per min
-- Surge multiplier
+- Configured fare-rule surge multiplier
+- Automatic peak-hour uplift based on the scheduled or current ride time
 - Optional promo discount
 
 ### Ride Lifecycle
@@ -454,7 +454,15 @@ Rides move through:
 
 `requested` -> `accepted` -> `driver_en_route` -> `in_progress` -> `completed`
 
-Riders can cancel before completion. Drivers can accept/reject requests. Completed rides generate payment records and wallet updates when applicable.
+Riders can cancel before completion. Drivers can accept or reject requests, update their live location during active trips, and complete rides with cash, wallet, or card payments. Completed rides generate payment records, driver earning credits, ride history entries, and post-trip rating opportunities when applicable.
+
+### Ratings, disputes, and payouts
+
+- Riders can rate drivers from ride history after completed rides.
+- Drivers can rate riders after completed rides.
+- Either side can file a complaint against a completed ride.
+- Admins can review complaints, change complaint status, and issue refunds on eligible payments.
+- Drivers accumulate earnings in their wallet and can submit payout requests for admin review.
 
 ---
 
@@ -464,16 +472,16 @@ High-level endpoints (see `server.js` for full details):
 
 - Health: `GET /api/health`
 - Auth: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`
-- Rider: `GET /api/rider/dashboard`, `POST /api/rider/rides`, `POST /api/rider/fares/estimate`
-- Driver: `GET /api/driver/dashboard`, `PATCH /api/driver/availability`, `PATCH /api/driver/location`
-- Admin: `GET /api/admin/dashboard`, `PATCH /api/admin/users/:userId/status`, `PATCH /api/admin/drivers/:driverId`, `PATCH /api/admin/vehicles/:vehicleId`
+- Rider: `GET /api/rider/dashboard`, `POST /api/rider/rides`, `POST /api/rider/fares/estimate`, `POST /api/rider/rides/:rideId/driver-rating`, `POST /api/rider/rides/:rideId/complaints`
+- Driver: `GET /api/driver/dashboard`, `PATCH /api/driver/availability`, `PATCH /api/driver/location`, `POST /api/driver/vehicles`, `POST /api/driver/payout-requests`, `POST /api/driver/rides/:rideId/rider-rating`, `POST /api/driver/rides/:rideId/complaints`
+- Admin: `GET /api/admin/dashboard`, `PATCH /api/admin/users/:userId/status`, `PATCH /api/admin/drivers/:driverId`, `PATCH /api/admin/vehicles/:vehicleId`, `PATCH /api/admin/complaints/:complaintId/status`, `POST /api/admin/payments/:paymentId/refund`, `PATCH /api/admin/payout-requests/:payoutRequestId`
 
 ---
 
 ## Database Notes
 
-- `schema.sql` defines core entities (users, drivers, vehicles, rides, payments, ratings, wallets, and locations).
-- `logic.sql` adds procedures, views, triggers, and admin notification automation.
+- `schema.sql` defines core entities (users, drivers, vehicles, rides, payments, ratings, wallets, complaints, payout requests, and locations).
+- `logic.sql` adds procedures, views, triggers, pricing logic, ride automation, and admin notification workflows.
 - `bootstrap.sql` loads the admin account and the city/location reference graph used by the app.
 - `security.sql` provides roles and sample DB users for role-based access.
 - `checks.sql` and `queries.sql` are validation and reporting scripts.
@@ -485,6 +493,9 @@ High-level endpoints (see `server.js` for full details):
 - **Cannot connect to MySQL**: verify credentials in `.env` and confirm the database exists.
 - **CORS errors**: add your origin to `CORS_ORIGINS`.
 - **Empty dashboards**: create rider and driver accounts, then configure fare rules from the admin panel.
+- **Drivers cannot take rides**: verify the driver profile and at least one vehicle from the admin panel, then set the driver to `online`.
+- **No active fare rules exist**: create a fare rule for the target city and vehicle type from the admin dashboard before requesting or estimating rides.
+- **Payout request is rejected by the UI**: the driver wallet must have enough available balance and the requested amount must be greater than zero.
 - **Login fails**: check that the account is `active` and that the selected dashboard matches the user role.
 
 ---

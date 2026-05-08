@@ -40,6 +40,7 @@ export function renderHistorySection() {
         { label: 'Driver', key: 'driver_name', format: (value) => escapeHtml(value || 'Unassigned') },
         { label: 'Driver Status', key: 'driver_is_flagged', format: (value, row) => renderDriverStatus(row) },
         { label: 'Your Rating', key: 'rider_driver_rating_id', format: (value, row) => renderRatingControl(row) },
+        { label: 'Issue', key: 'rider_complaint_id', format: (value, row) => renderComplaintControl(row) },
         { label: 'Payment', key: 'payment_method' },
         { label: 'Fare', key: 'final_fare', format: formatMoney }
       ])}
@@ -51,6 +52,7 @@ export function renderHistorySection() {
     renderHistorySection();
   });
   bindRatingForms();
+  bindComplaintButtons();
 }
 
 function renderDriverStatus(ride) {
@@ -93,6 +95,18 @@ function renderRatingControl(ride) {
   `;
 }
 
+function renderComplaintControl(ride) {
+  if (!ride.driver_user_id || !['accepted', 'driver_en_route', 'in_progress', 'completed', 'cancelled'].includes(ride.ride_status)) {
+    return '-';
+  }
+
+  if (ride.rider_complaint_id) {
+    return statusPill(ride.rider_complaint_status || 'open');
+  }
+
+  return `<button class="secondary-action" data-rider-complaint="${escapeHtml(ride.ride_id)}" type="button">Report issue</button>`;
+}
+
 function formatStars(score) {
   const value = Math.max(1, Math.min(5, Number(score || 0)));
   return `${value} star${value === 1 ? '' : 's'}`;
@@ -101,6 +115,12 @@ function formatStars(score) {
 function bindRatingForms() {
   document.querySelectorAll('[data-rating-form]').forEach((form) => {
     form.addEventListener('submit', rateDriver);
+  });
+}
+
+function bindComplaintButtons() {
+  document.querySelectorAll('[data-rider-complaint]').forEach((button) => {
+    button.addEventListener('click', () => fileComplaint(button.dataset.riderComplaint));
   });
 }
 
@@ -119,4 +139,19 @@ async function rateDriver(event) {
     });
     await refresh();
   }, 'Driver rated.');
+}
+
+async function fileComplaint(rideId) {
+  const complaintText = window.prompt('Describe the issue with this ride.');
+  if (!complaintText || !complaintText.trim()) {
+    return;
+  }
+
+  await run(async () => {
+    await api(`/api/rider/rides/${rideId}/complaints`, {
+      method: 'POST',
+      body: JSON.stringify({ complaintText: complaintText.trim() })
+    });
+    await refresh();
+  }, 'Issue reported.');
 }

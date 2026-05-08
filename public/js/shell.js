@@ -1,8 +1,8 @@
 import { api } from './api.js';
 import { sections, state } from './state.js';
-import { renderAdmin } from './admin.js';
-import { renderDriver } from './driver.js';
-import { renderRider } from './rider.js';
+import { renderAdmin } from './admin/index.js';
+import { renderDriver } from './driver/index.js';
+import { renderRider } from './rider/index.js';
 import { $, escapeHtml, selectOptions } from './ui.js';
 
 export function showLogin(options = {}) {

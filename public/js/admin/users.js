@@ -4,6 +4,8 @@ import { state } from '../state.js';
 import { $, escapeHtml, formObject, run, statusPill, table } from '../ui.js';
 import { adminStatusSelect, bindAdminStatusControls } from './shared.js';
 
+let adminSearchTimer = null;
+
 export function renderAdminUsers() {
   const data = state.data;
   const search = state.filters.adminSearch.trim().toLowerCase();
@@ -22,7 +24,7 @@ export function renderAdminUsers() {
         <label>Email<input name="email" type="email" required></label>
         <label>Phone<input name="phone" required></label>
         <label>Password<input name="password" type="password" required></label>
-        <label>Role<select name="role"><option value="rider">Rider</option><option value="driver">Driver</option><option value="admin">Admin</option></select></label>
+        <label>Role<select name="role"><option value="rider">Rider</option><option value="admin">Admin</option></select></label>
         <button class="primary-action" type="submit">Create User</button>
       </form>
     </section>
@@ -42,7 +44,10 @@ export function renderAdminUsers() {
   $('#createUserForm').addEventListener('submit', createUser);
   $('#adminSearchInput').addEventListener('input', (event) => {
     state.filters.adminSearch = event.target.value;
-    renderAdminUsers();
+    window.clearTimeout(adminSearchTimer);
+    adminSearchTimer = window.setTimeout(() => {
+      renderAdminUsers();
+    }, 180);
   });
   bindAdminStatusControls();
 }

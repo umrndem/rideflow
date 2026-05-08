@@ -15,7 +15,7 @@ export function renderDriver() {
   }
 
   if (state.activeSection === 'trips') {
-    renderDriverTrips({ data });
+    renderDriverTrips({ data, profile });
     return;
   }
 

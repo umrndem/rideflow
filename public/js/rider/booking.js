@@ -201,6 +201,10 @@ function renderCurrentRide(ride) {
       <strong>Ride #${escapeHtml(ride.ride_id)}</strong>
       <p>${escapeHtml(ride.pickup_address)} to ${escapeHtml(ride.dropoff_address)}</p>
       ${statusPill(ride.ride_status)}
+      ${ride.driver_current_location_address ? `
+        <p>Driver at ${escapeHtml(ride.driver_current_location_address)}</p>
+        <p>${escapeHtml(formatNumber(ride.driver_remaining_distance_km || 0))} km away | ETA ${escapeHtml(formatNumber(ride.driver_eta_min || 0))} min</p>
+      ` : ''}
       ${renderDriverWarning(ride)}
       ${activeTimeline(ride.ride_status)}
       ${canCancel ? '<button class="danger-action" id="cancelRideButton" type="button">Cancel ride</button>' : ''}

@@ -82,6 +82,7 @@ CREATE PROCEDURE sp_calculate_fare (
   IN p_per_km_rate DECIMAL(10,2),
   IN p_per_min_rate DECIMAL(10,2),
   IN p_promo_code VARCHAR(50),
+  IN p_reference_time DATETIME,
   OUT p_base_fare DECIMAL(10,2),
   OUT p_surge_multiplier DECIMAL(5,2),
   OUT p_discount_amount DECIMAL(10,2),
@@ -93,10 +94,25 @@ BEGIN
   DECLARE v_min_fare DECIMAL(10,2) DEFAULT 0;
   DECLARE v_is_active BOOLEAN DEFAULT FALSE;
   DECLARE v_now DATETIME;
+  DECLARE v_reference_time DATETIME;
   DECLARE v_gross_fare DECIMAL(10,2) DEFAULT 0;
+  DECLARE v_peak_multiplier DECIMAL(5,2) DEFAULT 1.00;
+  DECLARE v_reference_hour TINYINT UNSIGNED DEFAULT 0;
+  DECLARE v_reference_day TINYINT UNSIGNED DEFAULT 0;
   DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_is_active = FALSE;
 
   SET v_now = NOW();
+  SET v_reference_time = COALESCE(p_reference_time, v_now);
+  SET v_reference_hour = HOUR(v_reference_time);
+  SET v_reference_day = DAYOFWEEK(v_reference_time);
+
+  IF v_reference_hour BETWEEN 7 AND 9
+     OR v_reference_hour BETWEEN 17 AND 20 THEN
+    SET v_peak_multiplier = 1.25;
+  ELSEIF v_reference_day IN (6, 7)
+     AND v_reference_hour BETWEEN 20 AND 23 THEN
+    SET v_peak_multiplier = 1.15;
+  END IF;
 
   SET p_base_fare = ROUND(
     IFNULL(p_base_rate, 0) +
@@ -105,7 +121,7 @@ BEGIN
     2
   );
 
-  SET p_surge_multiplier = GREATEST(IFNULL(p_rule_surge_multiplier, 1.00), 1.00);
+  SET p_surge_multiplier = GREATEST(IFNULL(p_rule_surge_multiplier, 1.00), v_peak_multiplier, 1.00);
   SET v_gross_fare = ROUND(p_base_fare * p_surge_multiplier, 2);
 
   IF p_promo_code IS NOT NULL AND LENGTH(TRIM(p_promo_code)) > 0 THEN

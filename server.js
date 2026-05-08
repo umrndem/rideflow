@@ -320,7 +320,8 @@ async function getFare(connection, rideInput) {
     pickupLocationId,
     dropoffLocationId,
     vehicleType,
-    promoCode
+    promoCode,
+    scheduledFor
   } = rideInput;
 
   if (!pickupLocationId || !dropoffLocationId || !vehicleType) {
@@ -368,7 +369,7 @@ async function getFare(connection, rideInput) {
   const rule = rules[0];
 
   await connection.query(
-    `CALL sp_calculate_fare(?, ?, ?, ?, ?, ?, ?, @base_fare, @surge_multiplier, @discount_amount, @final_fare)`,
+    `CALL sp_calculate_fare(?, ?, ?, ?, ?, ?, ?, ?, @base_fare, @surge_multiplier, @discount_amount, @final_fare)`,
     [
       route.distance_km,
       route.duration_min,
@@ -376,7 +377,8 @@ async function getFare(connection, rideInput) {
       rule.base_rate,
       rule.per_km_rate,
       rule.per_min_rate,
-      promoCode || null
+      promoCode || null,
+      scheduledFor || null
     ]
   );
 
@@ -404,7 +406,8 @@ async function inferVehicleTypeForRide(connection, ride) {
         pickupLocationId: ride.pickup_location_id,
         dropoffLocationId: ride.dropoff_location_id,
         vehicleType: type,
-        promoCode: ride.promo_code || null
+        promoCode: ride.promo_code || null,
+        scheduledFor: ride.scheduled_for || null
       });
 
       const baseDelta = Math.abs(cleanNumber(result.fare.baseFare) - targetBase);
@@ -478,7 +481,35 @@ async function findNearestDriver(connection, pickupLocationId, vehicleType, excl
   return rows[0] || null;
 }
 
-async function createWalletTransaction(connection, userId, type, amount, description, rideId = null) {
+async function ensureWalletRecord(connection, userId) {
+  await connection.execute(`
+    INSERT INTO user_wallets (user_id, balance)
+    VALUES (?, 0)
+    ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)
+  `, [userId]);
+}
+
+function walletTransactionDirection(type, explicitDirection = null) {
+  if (explicitDirection) {
+    return explicitDirection;
+  }
+
+  if (type === 'ride_payment' || type === 'payout') {
+    return 'debit';
+  }
+
+  return 'credit';
+}
+
+async function createWalletTransaction(connection, userId, type, amount, description, rideId = null, explicitDirection = null) {
+  const normalizedAmount = cleanNumber(amount);
+
+  if (normalizedAmount <= 0) {
+    throw appError('Wallet transaction amount must be positive.');
+  }
+
+  await ensureWalletRecord(connection, userId);
+
   const [walletRows] = await connection.execute(
     'SELECT wallet_id, balance FROM user_wallets WHERE user_id = ? FOR UPDATE',
     [userId]
@@ -489,7 +520,9 @@ async function createWalletTransaction(connection, userId, type, amount, descrip
   }
 
   const wallet = walletRows[0];
-  const signedAmount = type === 'ride_payment' ? -amount : amount;
+  const signedAmount = walletTransactionDirection(type, explicitDirection) === 'debit'
+    ? -normalizedAmount
+    : normalizedAmount;
   const nextBalance = cleanNumber(wallet.balance) + signedAmount;
 
   if (nextBalance < 0) {
@@ -506,11 +539,11 @@ async function createWalletTransaction(connection, userId, type, amount, descrip
       wallet_id,
       ride_id,
       transaction_type,
-      amount,
-      balance_after,
-      description
+    amount,
+    balance_after,
+    description
     ) VALUES (?, ?, ?, ?, ?, ?)
-  `, [wallet.wallet_id, rideId, type, amount, nextBalance, description]);
+  `, [wallet.wallet_id, rideId, type, normalizedAmount, nextBalance, description]);
 
   return { balance: nextBalance };
 }
@@ -552,6 +585,44 @@ async function completeRideWithPayment(connection, ride, paymentStatus = 'paid')
     ride.payment_method,
     paymentStatus
   ]);
+
+  if (paymentStatus === 'paid' && ride.driver_id) {
+    const [paymentRows] = await connection.execute(`
+      SELECT
+        p.payment_id,
+        p.driver_net_earning,
+        d.user_id AS driver_user_id
+      FROM payments p
+      JOIN rides r
+        ON r.ride_id = p.ride_id
+      JOIN drivers d
+        ON d.driver_id = r.driver_id
+      WHERE p.ride_id = ?
+      LIMIT 1
+    `, [ride.ride_id]);
+
+    const payment = paymentRows[0];
+    if (payment?.driver_user_id && cleanNumber(payment.driver_net_earning) > 0) {
+      const [existingCredit] = await connection.execute(`
+        SELECT wallet_transaction_id
+        FROM wallet_transactions
+        WHERE ride_id = ?
+          AND transaction_type = 'driver_earning'
+        LIMIT 1
+      `, [ride.ride_id]);
+
+      if (existingCredit.length === 0) {
+        await createWalletTransaction(
+          connection,
+          payment.driver_user_id,
+          'driver_earning',
+          cleanNumber(payment.driver_net_earning),
+          `Ride #${ride.ride_id} earning`,
+          ride.ride_id
+        );
+      }
+    }
+  }
 }
 
 app.get('/', serveRootPage);
@@ -603,10 +674,7 @@ app.post('/api/auth/signup/rider', asyncRoute(async (request, response) => {
       VALUES (?, ?, ?, SHA2(?, 256), 'rider', 'active')
     `, [fullName, email, phone, password]);
 
-    await connection.execute(
-      'INSERT INTO user_wallets (user_id, balance) VALUES (?, 0)',
-      [userResult.insertId]
-    );
+    await ensureWalletRecord(connection, userResult.insertId);
 
     return userResult.insertId;
   });
@@ -662,6 +730,8 @@ app.post('/api/auth/signup/driver', asyncRoute(async (request, response) => {
       INSERT INTO users (full_name, email, phone, password_hash, role, account_status)
       VALUES (?, ?, ?, SHA2(?, 256), 'driver', 'active')
     `, [fullName, email, phone, password]);
+
+    await ensureWalletRecord(connection, userResult.insertId);
 
     const [driverResult] = await connection.execute(`
       INSERT INTO drivers (
@@ -803,9 +873,14 @@ app.get('/api/rider/dashboard', requireAuth('rider'), asyncRoute(async (request,
         dropoff.address AS dropoff_address,
         dropoff.city AS dropoff_city,
         d.driver_id,
+        d.current_location_id AS driver_current_location_id,
+        d.location_updated_at AS driver_location_updated_at,
         driver_user.full_name AS driver_name,
         driver_user.user_id AS driver_user_id,
         d.average_rating AS driver_average_rating,
+        driver_loc.address AS driver_current_location_address,
+        tracking_route.distance_km AS driver_remaining_distance_km,
+        tracking_route.duration_min AS driver_eta_min,
         (
           SELECT COUNT(*)
           FROM ratings driver_rating_count
@@ -833,6 +908,22 @@ app.get('/api/rider/dashboard', requireAuth('rider'), asyncRoute(async (request,
           ORDER BY latest_flag.created_at DESC
           LIMIT 1
         ) AS driver_flag_average,
+        (
+          SELECT latest_complaint.complaint_id
+          FROM complaints latest_complaint
+          WHERE latest_complaint.ride_id = r.ride_id
+            AND latest_complaint.complainant_user_id = ?
+          ORDER BY latest_complaint.created_at DESC
+          LIMIT 1
+        ) AS rider_complaint_id,
+        (
+          SELECT latest_complaint.complaint_status
+          FROM complaints latest_complaint
+          WHERE latest_complaint.ride_id = r.ride_id
+            AND latest_complaint.complainant_user_id = ?
+          ORDER BY latest_complaint.created_at DESC
+          LIMIT 1
+        ) AS rider_complaint_status,
         rider_driver_rating.rating_id AS rider_driver_rating_id,
         rider_driver_rating.score AS rider_driver_score,
         rider_driver_rating.comment AS rider_driver_comment,
@@ -847,6 +938,11 @@ app.get('/api/rider/dashboard', requireAuth('rider'), asyncRoute(async (request,
         ON d.driver_id = r.driver_id
       LEFT JOIN users driver_user
         ON driver_user.user_id = d.user_id
+      LEFT JOIN locations driver_loc
+        ON driver_loc.location_id = d.current_location_id
+      LEFT JOIN location_distances tracking_route
+        ON tracking_route.pickup_location_id = d.current_location_id
+       AND tracking_route.dropoff_location_id = r.dropoff_location_id
       LEFT JOIN ratings rider_driver_rating
         ON rider_driver_rating.ride_id = r.ride_id
        AND rider_driver_rating.rated_by_user_id = ?
@@ -857,7 +953,7 @@ app.get('/api/rider/dashboard', requireAuth('rider'), asyncRoute(async (request,
         ON p.ride_id = r.ride_id
       WHERE r.rider_id = ?
       ORDER BY r.requested_at DESC
-    `, [riderId, riderId]),
+    `, [riderId, riderId, riderId, riderId]),
     query(`
       SELECT
         wt.wallet_transaction_id,
@@ -927,7 +1023,8 @@ app.post('/api/rider/rides', requireAuth('rider'), asyncRoute(async (request, re
       pickupLocationId,
       dropoffLocationId,
       vehicleType,
-      promoCode
+      promoCode,
+      scheduledFor
     });
 
     if (paymentMethod === 'wallet') {
@@ -1075,10 +1172,68 @@ app.post('/api/rider/rides/:rideId/driver-rating', requireAuth('rider'), asyncRo
   response.status(201).json(result);
 }));
 
+app.post('/api/rider/rides/:rideId/complaints', requireAuth('rider'), asyncRoute(async (request, response) => {
+  const complaintText = cleanString(request.body.complaintText, 'Complaint', 500);
+
+  const result = await transaction(async (connection) => {
+    const [rides] = await connection.execute(`
+      SELECT
+        r.ride_id,
+        driver_user.user_id AS respondent_user_id
+      FROM rides r
+      JOIN drivers d
+        ON d.driver_id = r.driver_id
+      JOIN users driver_user
+        ON driver_user.user_id = d.user_id
+      WHERE r.ride_id = ?
+        AND r.rider_id = ?
+        AND r.ride_status IN ('accepted', 'driver_en_route', 'in_progress', 'completed', 'cancelled')
+      LIMIT 1
+    `, [request.params.rideId, request.user.userId]);
+
+    if (rides.length === 0) {
+      throw appError('A complaint can only be filed for one of your assigned rides.', 409);
+    }
+
+    const ride = rides[0];
+    const [existingComplaints] = await connection.execute(`
+      SELECT complaint_id
+      FROM complaints
+      WHERE ride_id = ?
+        AND complainant_user_id = ?
+        AND respondent_user_id = ?
+      LIMIT 1
+    `, [ride.ride_id, request.user.userId, ride.respondent_user_id]);
+
+    if (existingComplaints.length > 0) {
+      throw appError('You have already filed a complaint for this ride.', 409);
+    }
+
+    const [insertResult] = await connection.execute(`
+      INSERT INTO complaints (
+        ride_id,
+        complainant_user_id,
+        respondent_user_id,
+        complaint_text
+      ) VALUES (?, ?, ?, ?)
+    `, [ride.ride_id, request.user.userId, ride.respondent_user_id, complaintText]);
+
+    return { complaintId: insertResult.insertId };
+  });
+
+  response.status(201).json(result);
+}));
+
 app.get('/api/driver/dashboard', requireAuth('driver'), asyncRoute(async (request, response) => {
   const driverId = request.user.driverId;
 
-  const [profileRows, vehicleRows, pendingRequestsRaw, activeTrips, tripHistory, earningRows] = await Promise.all([
+  await query(`
+    INSERT INTO user_wallets (user_id, balance)
+    VALUES (?, 0)
+    ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)
+  `, [request.user.userId]);
+
+  const [profileRows, vehicleRows, pendingRequestsRaw, activeTrips, tripHistory, earningRows, walletRows, walletTransactions, payoutRequests] = await Promise.all([
     query(`
       SELECT
         d.driver_id,
@@ -1086,6 +1241,7 @@ app.get('/api/driver/dashboard', requireAuth('driver'), asyncRoute(async (reques
         d.verification_status,
         d.current_city,
         d.current_location_id,
+        d.location_updated_at,
         loc.address AS current_location_address,
         d.total_trips_completed,
         d.average_rating,
@@ -1171,12 +1327,49 @@ app.get('/api/driver/dashboard', requireAuth('driver'), asyncRoute(async (reques
         r.ride_id,
         r.ride_status,
         rider.full_name AS rider_name,
+        rider.user_id AS rider_user_id,
         pickup.city AS pickup_city,
         dropoff.city AS dropoff_city,
         r.final_fare,
         r.payment_method,
         p.driver_net_earning,
         p.payment_status,
+        (
+          SELECT latest_complaint.complaint_id
+          FROM complaints latest_complaint
+          WHERE latest_complaint.ride_id = r.ride_id
+            AND latest_complaint.complainant_user_id = ?
+          ORDER BY latest_complaint.created_at DESC
+          LIMIT 1
+        ) AS driver_complaint_id,
+        (
+          SELECT latest_complaint.complaint_status
+          FROM complaints latest_complaint
+          WHERE latest_complaint.ride_id = r.ride_id
+            AND latest_complaint.complainant_user_id = ?
+          ORDER BY latest_complaint.created_at DESC
+          LIMIT 1
+        ) AS driver_complaint_status,
+        (
+          SELECT ROUND(AVG(rider_rating.score), 2)
+          FROM ratings rider_rating
+          WHERE rider_rating.rated_user_id = rider.user_id
+        ) AS rider_average_rating,
+        EXISTS (
+          SELECT 1
+          FROM rider_warnings latest_warning
+          WHERE latest_warning.rider_id = rider.user_id
+        ) AS rider_is_flagged,
+        (
+          SELECT latest_warning.reason
+          FROM rider_warnings latest_warning
+          WHERE latest_warning.rider_id = rider.user_id
+          ORDER BY latest_warning.created_at DESC
+          LIMIT 1
+        ) AS rider_warning_reason,
+        driver_rider_rating.rating_id AS driver_rider_rating_id,
+        driver_rider_rating.score AS driver_rider_score,
+        driver_rider_rating.comment AS driver_rider_comment,
         r.requested_at
       FROM rides r
       JOIN users rider
@@ -1187,10 +1380,14 @@ app.get('/api/driver/dashboard', requireAuth('driver'), asyncRoute(async (reques
         ON dropoff.location_id = r.dropoff_location_id
       LEFT JOIN payments p
         ON p.ride_id = r.ride_id
+      LEFT JOIN ratings driver_rider_rating
+        ON driver_rider_rating.ride_id = r.ride_id
+       AND driver_rider_rating.rated_by_user_id = ?
+       AND driver_rider_rating.rated_user_id = rider.user_id
       WHERE r.driver_id = ?
         AND r.ride_status IN ('completed', 'cancelled')
       ORDER BY r.requested_at DESC
-    `, [driverId]),
+    `, [request.user.userId, request.user.userId, request.user.userId, driverId]),
     query(`
       SELECT
         ROUND(IFNULL(SUM(p.driver_net_earning), 0), 2) AS total_earnings,
@@ -1201,6 +1398,37 @@ app.get('/api/driver/dashboard', requireAuth('driver'), asyncRoute(async (reques
         ON r.ride_id = p.ride_id
       WHERE r.driver_id = ?
         AND p.payment_status = 'paid'
+    `, [driverId]),
+    query('SELECT wallet_id, balance, updated_at FROM user_wallets WHERE user_id = ?', [request.user.userId]),
+    query(`
+      SELECT
+        wt.wallet_transaction_id,
+        wt.transaction_type,
+        wt.amount,
+        wt.balance_after,
+        wt.description,
+        wt.created_at,
+        wt.ride_id
+      FROM wallet_transactions wt
+      JOIN user_wallets uw
+        ON uw.wallet_id = wt.wallet_id
+      WHERE uw.user_id = ?
+      ORDER BY wt.created_at DESC, wt.wallet_transaction_id DESC
+    `, [request.user.userId]),
+    query(`
+      SELECT
+        pr.payout_request_id,
+        pr.amount,
+        pr.status,
+        pr.notes,
+        pr.requested_at,
+        pr.processed_at,
+        admin_user.full_name AS processed_by_name
+      FROM driver_payout_requests pr
+      LEFT JOIN users admin_user
+        ON admin_user.user_id = pr.processed_by_user_id
+      WHERE pr.driver_id = ?
+      ORDER BY pr.requested_at DESC, pr.payout_request_id DESC
     `, [driverId])
   ]);
 
@@ -1242,6 +1470,9 @@ app.get('/api/driver/dashboard', requireAuth('driver'), asyncRoute(async (reques
 
   response.json({
     profile: profileRows[0],
+    wallet: walletRows[0],
+    walletTransactions,
+    payoutRequests,
     vehicles: vehicleRows,
     pendingRequests,
     activeTrips,
@@ -1298,6 +1529,7 @@ app.patch('/api/driver/availability', requireAuth('driver'), asyncRoute(async (r
 app.patch('/api/driver/location', requireAuth('driver'), asyncRoute(async (request, response) => {
   const city = cleanString(request.body.city, 'City', 100);
   const currentLocationId = cleanPositiveInt(request.body.currentLocationId, 'Driver location');
+  const allowDuringTrip = request.body.allowDuringTrip === true;
 
   const activeRows = await query(`
     SELECT COUNT(*) AS active_count
@@ -1306,7 +1538,7 @@ app.patch('/api/driver/location', requireAuth('driver'), asyncRoute(async (reque
       AND ride_status IN ('accepted', 'driver_en_route', 'in_progress')
   `, [request.user.driverId]);
 
-  if (activeRows[0].active_count > 0) {
+  if (activeRows[0].active_count > 0 && !allowDuringTrip) {
     response.status(409).json({ error: 'Complete active trips before changing your work area.' });
     return;
   }
@@ -1327,15 +1559,104 @@ app.patch('/api/driver/location', requireAuth('driver'), asyncRoute(async (reque
   await query(`
     UPDATE drivers
     SET current_city = ?,
-        current_location_id = ?
+        current_location_id = ?,
+        location_updated_at = NOW()
     WHERE driver_id = ?
   `, [city, currentLocationId, request.user.driverId]);
 
   response.json({
     city,
     currentLocationId,
-    address: locationRows[0].address
+    address: locationRows[0].address,
+    locationUpdatedAt: new Date().toISOString()
   });
+}));
+
+app.post('/api/driver/vehicles', requireAuth('driver'), asyncRoute(async (request, response) => {
+  const make = cleanString(request.body.make, 'Vehicle make', 80);
+  const model = cleanString(request.body.model, 'Vehicle model', 80);
+  const year = cleanPositiveInt(request.body.year, 'Vehicle year');
+  const color = cleanString(request.body.color, 'Vehicle color', 40);
+  const licensePlate = cleanString(request.body.licensePlate, 'License plate', 40);
+  const vehicleType = cleanEnum(request.body.vehicleType, ['economy', 'premium', 'bike'], 'vehicle type');
+
+  if (year < 1980 || year > 2100) {
+    response.status(400).json({ error: 'Vehicle year must be between 1980 and 2100.' });
+    return;
+  }
+
+  const [result] = await pool.execute(`
+    INSERT INTO vehicles (
+      driver_id,
+      make,
+      model,
+      year,
+      color,
+      license_plate,
+      vehicle_type,
+      verification_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+  `, [request.user.driverId, make, model, year, color, licensePlate, vehicleType]);
+
+  response.status(201).json({ vehicleId: result.insertId });
+}));
+
+app.post('/api/driver/payout-requests', requireAuth('driver'), asyncRoute(async (request, response) => {
+  const amount = cleanNumber(request.body.amount);
+
+  if (amount <= 0 || amount > 1000000) {
+    response.status(400).json({ error: 'Payout amount must be between 1 and 1,000,000.' });
+    return;
+  }
+
+  const result = await transaction(async (connection) => {
+    await ensureWalletRecord(connection, request.user.userId);
+
+    const [walletRows] = await connection.execute(
+      'SELECT balance FROM user_wallets WHERE user_id = ? FOR UPDATE',
+      [request.user.userId]
+    );
+
+    if (cleanNumber(walletRows[0]?.balance) < amount) {
+      throw appError('Driver wallet balance is too low for this payout request.', 409);
+    }
+
+    const [pendingRequests] = await connection.execute(`
+      SELECT payout_request_id
+      FROM driver_payout_requests
+      WHERE driver_id = ?
+        AND status = 'pending'
+      LIMIT 1
+    `, [request.user.driverId]);
+
+    if (pendingRequests.length > 0) {
+      throw appError('There is already a pending payout request for this driver.', 409);
+    }
+
+    const [recentRequests] = await connection.execute(`
+      SELECT requested_at
+      FROM driver_payout_requests
+      WHERE driver_id = ?
+      ORDER BY requested_at DESC
+      LIMIT 1
+    `, [request.user.driverId]);
+
+    if (recentRequests.length > 0) {
+      const lastRequestTime = new Date(recentRequests[0].requested_at).getTime();
+      if (Number.isFinite(lastRequestTime) && (Date.now() - lastRequestTime) < (1000 * 60 * 60 * 24 * 7)) {
+        throw appError('Payout requests are available once every 7 days.', 409);
+      }
+    }
+
+    const [insertResult] = await connection.execute(`
+      INSERT INTO driver_payout_requests (driver_id, amount)
+      VALUES (?, ?)
+    `, [request.user.driverId, amount]);
+
+    return { payoutRequestId: insertResult.insertId };
+  });
+
+  response.status(201).json(result);
 }));
 
 app.post('/api/driver/rides/:rideId/accept', requireAuth('driver'), asyncRoute(async (request, response) => {
@@ -1578,6 +1899,114 @@ app.patch('/api/driver/rides/:rideId/status', requireAuth('driver'), asyncRoute(
   response.json({ ok: true });
 }));
 
+app.post('/api/driver/rides/:rideId/rider-rating', requireAuth('driver'), asyncRoute(async (request, response) => {
+  const score = Number(request.body.score);
+  const comment = String(request.body.comment || '').trim();
+
+  if (!Number.isInteger(score) || score < 1 || score > 5) {
+    response.status(400).json({ error: 'Rating must be between 1 and 5 stars.' });
+    return;
+  }
+
+  if (comment.length > 500) {
+    response.status(400).json({ error: 'Rating comment must be 500 characters or less.' });
+    return;
+  }
+
+  const result = await transaction(async (connection) => {
+    const [rides] = await connection.execute(`
+      SELECT
+        r.ride_id,
+        r.rider_id
+      FROM rides r
+      WHERE r.ride_id = ?
+        AND r.driver_id = ?
+        AND r.ride_status = 'completed'
+      LIMIT 1
+    `, [request.params.rideId, request.user.driverId]);
+
+    if (rides.length === 0) {
+      throw appError('Only completed rides assigned to you can be rated.', 409);
+    }
+
+    try {
+      const [insertResult] = await connection.execute(`
+        INSERT INTO ratings (
+          ride_id,
+          rated_by_user_id,
+          rated_user_id,
+          score,
+          comment
+        ) VALUES (?, ?, ?, ?, ?)
+      `, [
+        rides[0].ride_id,
+        request.user.userId,
+        rides[0].rider_id,
+        score,
+        comment || null
+      ]);
+
+      return { ratingId: insertResult.insertId };
+    } catch (error) {
+      if (error.code === 'ER_DUP_ENTRY') {
+        throw appError('You have already rated this rider for this ride.', 409);
+      }
+
+      throw error;
+    }
+  });
+
+  response.status(201).json(result);
+}));
+
+app.post('/api/driver/rides/:rideId/complaints', requireAuth('driver'), asyncRoute(async (request, response) => {
+  const complaintText = cleanString(request.body.complaintText, 'Complaint', 500);
+
+  const result = await transaction(async (connection) => {
+    const [rides] = await connection.execute(`
+      SELECT
+        r.ride_id,
+        r.rider_id AS respondent_user_id
+      FROM rides r
+      WHERE r.ride_id = ?
+        AND r.driver_id = ?
+        AND r.ride_status IN ('accepted', 'driver_en_route', 'in_progress', 'completed', 'cancelled')
+      LIMIT 1
+    `, [request.params.rideId, request.user.driverId]);
+
+    if (rides.length === 0) {
+      throw appError('A complaint can only be filed for one of your assigned rides.', 409);
+    }
+
+    const ride = rides[0];
+    const [existingComplaints] = await connection.execute(`
+      SELECT complaint_id
+      FROM complaints
+      WHERE ride_id = ?
+        AND complainant_user_id = ?
+        AND respondent_user_id = ?
+      LIMIT 1
+    `, [ride.ride_id, request.user.userId, ride.respondent_user_id]);
+
+    if (existingComplaints.length > 0) {
+      throw appError('You have already filed a complaint for this ride.', 409);
+    }
+
+    const [insertResult] = await connection.execute(`
+      INSERT INTO complaints (
+        ride_id,
+        complainant_user_id,
+        respondent_user_id,
+        complaint_text
+      ) VALUES (?, ?, ?, ?)
+    `, [ride.ride_id, request.user.userId, ride.respondent_user_id, complaintText]);
+
+    return { complaintId: insertResult.insertId };
+  });
+
+  response.status(201).json(result);
+}));
+
 app.get('/api/admin/dashboard', requireAuth('admin'), asyncRoute(async (request, response) => {
   const [
     metricRows,
@@ -1590,7 +2019,9 @@ app.get('/api/admin/dashboard', requireAuth('admin'), asyncRoute(async (request,
     paymentMethods,
     activeRides,
     flags,
-    refundDisputes
+    refundDisputes,
+    complaints,
+    payoutRequests
   ] = await Promise.all([
     query(`
       SELECT
@@ -1692,7 +2123,45 @@ app.get('/api/admin/dashboard', requireAuth('admin'), asyncRoute(async (request,
       WHERE f.is_resolved = FALSE
       ORDER BY f.created_at DESC
     `),
-    query('SELECT * FROM vw_refund_dispute_totals')
+    query('SELECT * FROM vw_refund_dispute_totals'),
+    query(`
+      SELECT
+        c.complaint_id,
+        c.ride_id,
+        c.complaint_text,
+        c.complaint_status,
+        c.created_at,
+        complainant.full_name AS complainant_name,
+        respondent.full_name AS respondent_name,
+        p.payment_id,
+        p.payment_status,
+        p.amount AS payment_amount
+      FROM complaints c
+      JOIN users complainant
+        ON complainant.user_id = c.complainant_user_id
+      JOIN users respondent
+        ON respondent.user_id = c.respondent_user_id
+      LEFT JOIN payments p
+        ON p.ride_id = c.ride_id
+      ORDER BY c.complaint_status IN ('open', 'under_review') DESC, c.created_at DESC
+    `),
+    query(`
+      SELECT
+        pr.payout_request_id,
+        pr.driver_id,
+        driver_user.full_name AS driver_name,
+        pr.amount,
+        pr.status,
+        pr.notes,
+        pr.requested_at,
+        pr.processed_at
+      FROM driver_payout_requests pr
+      JOIN drivers d
+        ON d.driver_id = pr.driver_id
+      JOIN users driver_user
+        ON driver_user.user_id = d.user_id
+      ORDER BY pr.status = 'pending' DESC, pr.requested_at DESC, pr.payout_request_id DESC
+    `)
   ]);
 
   response.json({
@@ -1707,7 +2176,9 @@ app.get('/api/admin/dashboard', requireAuth('admin'), asyncRoute(async (request,
       paymentMethods,
       activeRides,
       flags,
-      refundDisputes: refundDisputes[0] || {}
+      refundDisputes: refundDisputes[0] || {},
+      complaints,
+      payoutRequests
     }
   });
 }));
@@ -1717,7 +2188,7 @@ app.post('/api/admin/users', requireAuth('admin'), asyncRoute(async (request, re
   const email = cleanEmail(request.body.email);
   const phone = cleanString(request.body.phone, 'Phone', 30);
   const password = cleanPassword(request.body.password);
-  const role = cleanEnum(request.body.role, ['rider', 'driver', 'admin'], 'role');
+  const role = cleanEnum(request.body.role, ['rider', 'admin'], 'role');
 
   const result = await query(`
     INSERT INTO users (full_name, email, phone, password_hash, role)
@@ -1725,7 +2196,11 @@ app.post('/api/admin/users', requireAuth('admin'), asyncRoute(async (request, re
   `, [fullName, email, phone, password, role]);
 
   if (role === 'rider') {
-    await query('INSERT INTO user_wallets (user_id, balance) VALUES (?, 0)', [result.insertId]);
+    await query(`
+      INSERT INTO user_wallets (user_id, balance)
+      VALUES (?, 0)
+      ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)
+    `, [result.insertId]);
   }
 
   response.status(201).json({ userId: result.insertId });
@@ -1777,6 +2252,162 @@ app.patch('/api/admin/vehicles/:vehicleId', requireAuth('admin'), asyncRoute(asy
   );
 
   response.json({ ok: true });
+}));
+
+app.patch('/api/admin/complaints/:complaintId/status', requireAuth('admin'), asyncRoute(async (request, response) => {
+  const status = cleanEnum(request.body.status, ['open', 'under_review', 'resolved', 'rejected'], 'complaint status');
+
+  await query(
+    'UPDATE complaints SET complaint_status = ? WHERE complaint_id = ?',
+    [status, request.params.complaintId]
+  );
+
+  response.json({ ok: true });
+}));
+
+app.post('/api/admin/payments/:paymentId/refund', requireAuth('admin'), asyncRoute(async (request, response) => {
+  const complaintId = request.body.complaintId ? cleanPositiveInt(request.body.complaintId, 'Complaint') : null;
+
+  const result = await transaction(async (connection) => {
+    const [paymentRows] = await connection.execute(`
+      SELECT
+        p.payment_id,
+        p.ride_id,
+        p.rider_id,
+        p.amount,
+        p.driver_net_earning,
+        p.payment_method,
+        p.payment_status,
+        d.user_id AS driver_user_id
+      FROM payments p
+      JOIN rides r
+        ON r.ride_id = p.ride_id
+      LEFT JOIN drivers d
+        ON d.driver_id = r.driver_id
+      WHERE p.payment_id = ?
+      LIMIT 1
+    `, [request.params.paymentId]);
+
+    if (paymentRows.length === 0) {
+      throw appError('Payment not found.', 404);
+    }
+
+    const payment = paymentRows[0];
+
+    if (payment.payment_status === 'refunded') {
+      throw appError('This payment has already been refunded.', 409);
+    }
+
+    if (payment.payment_status !== 'paid') {
+      throw appError('Only paid payments can be refunded.', 409);
+    }
+
+    if (payment.driver_user_id && cleanNumber(payment.driver_net_earning) > 0) {
+      await ensureWalletRecord(connection, payment.driver_user_id);
+
+      const [driverWalletRows] = await connection.execute(
+        'SELECT balance FROM user_wallets WHERE user_id = ? FOR UPDATE',
+        [payment.driver_user_id]
+      );
+
+      if (cleanNumber(driverWalletRows[0]?.balance) < cleanNumber(payment.driver_net_earning)) {
+        throw appError('Driver wallet balance is too low to reverse earnings for this refund.', 409);
+      }
+
+      await createWalletTransaction(
+        connection,
+        payment.driver_user_id,
+        'adjustment',
+        cleanNumber(payment.driver_net_earning),
+        `Refund reversal for ride #${payment.ride_id}`,
+        payment.ride_id,
+        'debit'
+      );
+    }
+
+    await createWalletTransaction(
+      connection,
+      payment.rider_id,
+      'refund',
+      cleanNumber(payment.amount),
+      `Refund for ride #${payment.ride_id}`,
+      payment.ride_id
+    );
+
+    await connection.execute(`
+      UPDATE payments
+      SET payment_status = 'refunded',
+          transaction_date = NOW()
+      WHERE payment_id = ?
+    `, [payment.payment_id]);
+
+    if (complaintId) {
+      await connection.execute(`
+        UPDATE complaints
+        SET complaint_status = 'resolved'
+        WHERE complaint_id = ?
+          AND ride_id = ?
+      `, [complaintId, payment.ride_id]);
+    }
+
+    return { paymentId: payment.payment_id };
+  });
+
+  response.json(result);
+}));
+
+app.patch('/api/admin/payout-requests/:payoutRequestId', requireAuth('admin'), asyncRoute(async (request, response) => {
+  const status = cleanEnum(request.body.status, ['paid', 'rejected'], 'payout request status');
+  const notes = request.body.notes ? cleanString(request.body.notes, 'Notes', 255) : null;
+
+  const result = await transaction(async (connection) => {
+    const [requestRows] = await connection.execute(`
+      SELECT
+        pr.payout_request_id,
+        pr.driver_id,
+        pr.amount,
+        pr.status,
+        d.user_id AS driver_user_id
+      FROM driver_payout_requests pr
+      JOIN drivers d
+        ON d.driver_id = pr.driver_id
+      WHERE pr.payout_request_id = ?
+      LIMIT 1
+    `, [request.params.payoutRequestId]);
+
+    if (requestRows.length === 0) {
+      throw appError('Payout request not found.', 404);
+    }
+
+    const payoutRequest = requestRows[0];
+
+    if (payoutRequest.status !== 'pending') {
+      throw appError('Only pending payout requests can be processed.', 409);
+    }
+
+    if (status === 'paid') {
+      await createWalletTransaction(
+        connection,
+        payoutRequest.driver_user_id,
+        'payout',
+        cleanNumber(payoutRequest.amount),
+        `Weekly payout request #${payoutRequest.payout_request_id}`
+      );
+    }
+
+    await connection.execute(`
+      UPDATE driver_payout_requests
+      SET status = ?,
+          notes = ?,
+          processed_at = NOW(),
+          processed_by_user_id = ?
+      WHERE payout_request_id = ?
+    `, [status, notes, request.user.userId, payoutRequest.payout_request_id]);
+
+    return { payoutRequestId: payoutRequest.payout_request_id };
+  });
+
+  response.json(result);
 }));
 
 app.post('/api/admin/fare-rules', requireAuth('admin'), asyncRoute(async (request, response) => {
