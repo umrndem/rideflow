@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 110" role="img" aria-labelledby="title">
+  <title id="title">Bike ride</title>
+  <rect width="180" height="110" rx="22" fill="#ecfdf5"/>
+  <circle cx="51" cy="78" r="20" fill="#111"/>
+  <circle cx="129" cy="78" r="20" fill="#111"/>
+  <circle cx="51" cy="78" r="9" fill="#ffdf32"/>
+  <circle cx="129" cy="78" r="9" fill="#ffdf32"/>
+  <path d="M48 74h26l17-32h20l18 32" fill="none" stroke="#ffdf32" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M88 42h-18" stroke="#111" stroke-width="9" stroke-linecap="round"/>
+  <path d="M111 42l16-15" stroke="#111" stroke-width="9" stroke-linecap="round"/>
+  <path d="M92 42l19 36" stroke="#111" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="100" cy="26" r="10" fill="#111"/>
+</svg>

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="rideflow-audience" content="driver">
+    <title>RideFlow Driver</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div id="toastHost" class="toast-host"></div>
+
+    <section class="auth-shell" id="authShell">
+      <div class="auth-visual">
+        <div class="brand-lockup">
+          <img class="brand-mark" src="/assets/rideflow-mark.svg" alt="RideFlow">
+          <div>
+            <h1>RideFlow</h1>
+            <p id="authBrandCopy">Fast rides, trusted drivers, wallet payments, and city operations in one polished platform.</p>
+          </div>
+        </div>
+        <div class="route-card">
+          <img class="auth-route-art" src="/assets/rideflow-route-art.svg" alt="RideFlow city route preview">
+          <div class="route-stats">
+            <div><span>Active rides</span><strong id="authActiveMetric">Live</strong></div>
+            <div><span>Coverage</span><strong>5 cities</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="auth-panel">
+        <div class="auth-tabs" id="authTabs">
+          <button class="active" type="button" data-auth-view="login">Login</button>
+          <button type="button" data-auth-view="riderSignup">Rider Signup</button>
+          <button type="button" data-auth-view="driverSignup">Driver Signup</button>
+        </div>
+
+        <form class="auth-form active" id="loginForm" data-auth-form="login">
+          <div class="auth-form-intro">
+            <span id="authAccessLabel" class="eyebrow">Driver Access</span>
+            <h2 id="authAccessTitle">Welcome back</h2>
+            <p id="authAccessCopy">Sign in to accept trips, update your work area, and manage earnings.</p>
+          </div>
+          <input id="loginRoleInput" name="role" type="hidden" value="driver">
+          <label>
+            Email
+            <input name="email" type="email" autocomplete="username" required>
+          </label>
+          <label>
+            Password
+            <input name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button class="primary-action" id="loginSubmitButton" type="submit">Sign In</button>
+        </form>
+
+        <form class="auth-form" id="riderSignupForm" data-auth-form="riderSignup">
+          <label>Full Name<input name="fullName" required></label>
+          <label>Email<input name="email" type="email" required></label>
+          <label>Phone<input name="phone" required></label>
+          <label>Password<input name="password" type="password" required></label>
+          <button class="primary-action" type="submit">Create Rider Account</button>
+        </form>
+
+        <form class="auth-form" id="driverSignupForm" data-auth-form="driverSignup">
+          <label>Full Name<input name="fullName" required></label>
+          <label>Email<input name="email" type="email" required></label>
+          <label>Phone<input name="phone" required></label>
+          <label>Password<input name="password" type="password" required></label>
+          <label>License Number<input name="licenseNumber" required></label>
+          <label>CNIC / National ID<input name="nationalId" required></label>
+          <label>City<select name="city" id="driverCitySelect" required></select></label>
+          <label>Current Area<select name="currentLocationId" id="driverLocationSelect" required></select></label>
+          <label>Vehicle Make<input name="make" required></label>
+          <label>Vehicle Model<input name="model" required></label>
+          <label>Year<input name="year" type="number" min="1980" max="2100" required></label>
+          <label>Color<input name="color" required></label>
+          <label>License Plate<input name="licensePlate" required></label>
+          <label>Vehicle Type
+            <select name="vehicleType" required>
+              <option value="economy">Economy</option>
+              <option value="premium">Premium</option>
+              <option value="bike">Bike</option>
+            </select>
+          </label>
+          <button class="primary-action" type="submit">Create Driver Account</button>
+        </form>
+      </div>
+    </section>
+
+    <div class="app-shell hidden" id="appShell">
+      <aside class="sidebar">
+        <div class="brand-row">
+          <img class="brand-mark" src="/assets/rideflow-mark.svg" alt="RideFlow">
+          <div>
+            <strong>RideFlow</strong>
+            <span id="roleLabel">Dashboard</span>
+          </div>
+        </div>
+
+        <nav class="nav-tabs" id="navTabs" aria-label="Dashboard sections"></nav>
+
+        <div class="session-card">
+          <span id="sessionName">Signed in</span>
+          <strong id="sessionEmail">account</strong>
+        </div>
+
+        <button class="secondary-action" id="logoutButton" type="button">Sign Out</button>
+      </aside>
+
+      <main class="workspace">
+        <header class="workspace-header">
+          <div>
+            <p class="eyebrow" id="pageEyebrow">RideFlow</p>
+            <h1 id="pageTitle">Dashboard</h1>
+          </div>
+          <div class="header-actions">
+            <span class="live-chip" id="liveStatus">Live</span>
+            <button class="primary-action" id="refreshButton" type="button">Sync Now</button>
+          </div>
+        </header>
+
+        <div class="loading-bar hidden" id="loadingBar">Loading live data</div>
+        <div id="content"></div>
+      </main>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

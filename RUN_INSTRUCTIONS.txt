@@ -1,0 +1,151 @@
+RideFlow Setup and Test Guide
+============================
+
+What is inside this package
+---------------------------
+- server.js: Express backend connected to MySQL.
+- public/: frontend app for Rider, Driver, and Admin dashboards.
+- schema.sql: database schema.
+- logic.sql: stored procedures, triggers, views, and events.
+- bootstrap.sql: admin account plus reference location data for a clean start.
+- security.sql: MySQL roles and grants.
+- queries.sql: rubric/reporting queries.
+- checks.sql: quick database verification queries.
+- package.json and package-lock.json: Node dependencies.
+- .env.example: environment variable template.
+
+Prerequisites
+-------------
+1. Node.js installed.
+2. MySQL Server 8.x installed and running.
+3. MySQL user with permission to create databases, tables, triggers, procedures, events, and roles.
+
+Default local database settings
+-------------------------------
+This project was tested with:
+
+DB_USER=root
+DB_PASSWORD=123456
+DB_NAME=rideflow_db
+PORT=3000
+
+If your MySQL password is different, edit the .env file after copying .env.example.
+
+Useful .env settings:
+- CORS_ORIGINS controls which browser origins can call the API.
+- SESSION_TTL_MS controls how long login sessions last. The default is 8 hours.
+
+Setup Steps
+-----------
+1. Extract the zip file.
+
+2. Open a terminal in the extracted RideFlow folder.
+
+3. Install Node dependencies:
+
+   npm install
+
+4. Create the environment file:
+
+   Copy .env.example to .env
+
+   On Windows PowerShell:
+   Copy-Item .env.example .env
+
+   Then edit .env if your MySQL username or password is different.
+
+5. Load the database in this order:
+
+   mysql -uroot -p123456 --default-character-set=utf8mb4 < schema.sql
+   mysql -uroot -p123456 --default-character-set=utf8mb4 < logic.sql
+   mysql -uroot -p123456 --default-character-set=utf8mb4 < bootstrap.sql
+   mysql -uroot -p123456 --default-character-set=utf8mb4 < security.sql
+
+   If your MySQL password is not 123456, replace it in the commands.
+
+   If mysql is not recognized in the terminal, either:
+   - Add MySQL bin folder to PATH, or
+   - Run the same SQL files in MySQL Workbench in the same order.
+
+6. Enable the MySQL event scheduler:
+
+   mysql -uroot -p123456 -e "SET GLOBAL event_scheduler = ON;"
+
+7. Start the app:
+
+   npm start
+
+8. Open the app:
+
+   http://localhost:3000
+
+Role-specific entry pages
+-------------------------
+- Rider app: http://localhost:3000/
+- Driver app: http://localhost:3000/driver/
+- Admin panel: http://localhost:3000/admin/
+
+Notes:
+- The admin page uses separate routing from the rider and driver apps.
+- Anyone can open the rider, driver, or admin login pages directly.
+- The admin dashboard data and actions are still protected by admin-only login and admin-only API routes.
+- For deployment, the app auto-detects hostnames so the same codebase can serve:
+  - rideflow... as the rider app
+  - driver.rideflow... as the driver app
+  - admin.rideflow... as the admin app
+
+Mobile Testing
+--------------
+- The frontend automatically switches into mobile/touch mode on small screens and touch-first devices.
+- In Chrome or Edge, open DevTools, toggle the device toolbar, and choose a phone viewport.
+- The mobile version uses a sticky header, bottom navigation, larger touch targets, and card-style data tables.
+
+Admin Access
+------------
+Admin:
+Email: admin@rideflow.test
+Password: admin123
+Entry page: http://localhost:3000/admin/
+
+What to Test
+------------
+1. Rider Dashboard
+- Sign up a new rider account.
+- Book a ride by selecting city, pickup, drop-off, vehicle type, promo, and payment method.
+- Use Book for later to reveal pickup time.
+- View current ride, ride history, and wallet transactions.
+- Rate drivers from completed rides in the ride history page.
+- If a driver is under review because of poor ratings, the rider sees a warning but can still continue.
+- Top up wallet balance.
+
+2. Driver Dashboard
+- Sign up a new driver account.
+- Change city and nearest work area.
+- Toggle online/offline availability.
+- Accept or reject assigned ride requests and open city ride offers.
+- Move active trips through ride states.
+- View earnings and trip history.
+
+3. Admin Panel
+- View live reports and analytics.
+- Manage user account statuses.
+- Verify or reject drivers and vehicles.
+- Configure fare rules per city and vehicle type, including per-km price.
+- Set fare rules before testing rider booking, since the clean bootstrap does not preload pricing rows.
+
+4. Multi-session Behavior
+- Log in as a signed-up Rider in one browser.
+- Log in as a signed-up Driver in another browser.
+- Log in as Admin in a third browser.
+- They should work at the same time with separate sessions.
+
+5. Database Checks
+- Run checks.sql in MySQL Workbench or terminal to verify views, indexes, triggers, events, and platform objects.
+- Run queries.sql to show rubric/reporting queries.
+
+Notes
+-----
+- node_modules is intentionally not included. Run npm install to recreate it.
+- .env is intentionally not included. Use .env.example.
+- The app uses live MySQL data. There is no mock-data mode.
+- If port 3000 is busy, change PORT in .env.

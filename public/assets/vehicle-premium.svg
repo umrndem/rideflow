@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 110" role="img" aria-labelledby="title">
+  <title id="title">Premium car</title>
+  <rect width="180" height="110" rx="22" fill="#eef2ff"/>
+  <path d="M31 70h118l-13-31c-3-7-9-11-17-11H62c-8 0-14 4-17 11L31 70Z" fill="#111"/>
+  <path d="M62 43h25v19H53l5-14c.7-2.7 2.2-5 4-5Zm40 0h25c1.8 0 3.3 2.3 4 5l5 14h-34V43Z" fill="#ffdf32"/>
+  <rect x="25" y="62" width="130" height="24" rx="12" fill="#2b2b2b"/>
+  <path d="M73 25h34l-6 11H79l-6-11Z" fill="#ffdf32"/>
+  <circle cx="57" cy="86" r="12" fill="#111"/>
+  <circle cx="123" cy="86" r="12" fill="#111"/>
+  <circle cx="57" cy="86" r="5" fill="#ffdf32"/>
+  <circle cx="123" cy="86" r="5" fill="#ffdf32"/>
+</svg>

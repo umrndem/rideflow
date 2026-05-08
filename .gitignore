@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+.vscode/
+ca.pem
+*.log
+dist/
+build/
+.DS_Store
+Thumbs.db
+RideFlow-handoff.zip

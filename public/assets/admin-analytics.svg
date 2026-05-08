@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 280" role="img" aria-labelledby="title desc">
+  <title id="title">Operations analytics</title>
+  <desc id="desc">Abstract analytics dashboard with city revenue bars and moving route nodes.</desc>
+  <rect width="460" height="280" rx="24" fill="#111"/>
+  <rect x="30" y="32" width="400" height="216" rx="18" fill="#1d1d1d"/>
+  <g fill="#ffdf32">
+    <rect x="66" y="167" width="42" height="49" rx="8"/>
+    <rect x="126" y="128" width="42" height="88" rx="8"/>
+    <rect x="186" y="92" width="42" height="124" rx="8"/>
+    <rect x="246" y="143" width="42" height="73" rx="8"/>
+  </g>
+  <g fill="#fff" opacity=".22">
+    <rect x="66" y="64" width="122" height="14" rx="7"/>
+    <rect x="66" y="92" width="82" height="10" rx="5"/>
+    <rect x="316" y="64" width="64" height="64" rx="16"/>
+    <rect x="316" y="150" width="76" height="12" rx="6"/>
+    <rect x="316" y="178" width="54" height="12" rx="6"/>
+  </g>
+  <path d="M330 104c24 19 45 17 66-6" fill="none" stroke="#ffdf32" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="330" cy="104" r="10" fill="#16895f"/>
+  <circle cx="396" cy="98" r="10" fill="#d84d3f"/>
+</svg>

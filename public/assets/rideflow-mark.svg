@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">RideFlow mark</title>
+  <desc id="desc">A bold R-shaped route mark with a forward arrow.</desc>
+  <rect width="96" height="96" rx="20" fill="#ffdf32"/>
+  <path d="M24 72V24h28c12.7 0 21 7.2 21 18.1 0 7.7-4.2 13.4-11.1 16.1L76 72H58L46.2 60H39v12H24Zm15-25h12.1c4.2 0 6.8-2.1 6.8-5.7 0-3.5-2.6-5.5-6.8-5.5H39V47Z" fill="#111"/>
+  <path d="M54 31h15.5L80 42 69.5 53H54l10.4-11L54 31Z" fill="#111"/>
+  <circle cx="26" cy="76" r="4" fill="#111"/>
+</svg>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 110" role="img" aria-labelledby="title">
+  <title id="title">Economy car</title>
+  <rect width="180" height="110" rx="22" fill="#fff8cc"/>
+  <path d="M39 68h102l-10-29c-2-6-8-10-15-10H64c-7 0-13 4-15 10L39 68Z" fill="#ffdf32"/>
+  <path d="M61 44h23v17H53l5-13c.5-2.2 1.7-4 3-4Zm35 0h23c1.3 0 2.5 1.8 3 4l5 13H96V44Z" fill="#111"/>
+  <rect x="31" y="58" width="118" height="26" rx="13" fill="#111"/>
+  <circle cx="58" cy="85" r="12" fill="#2d2d2d"/>
+  <circle cx="122" cy="85" r="12" fill="#2d2d2d"/>
+  <circle cx="58" cy="85" r="5" fill="#ffdf32"/>
+  <circle cx="122" cy="85" r="5" fill="#ffdf32"/>
+</svg>

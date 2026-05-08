@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 220" role="img" aria-labelledby="title desc">
+  <title id="title">No rides</title>
+  <desc id="desc">Small empty state route artwork.</desc>
+  <rect width="360" height="220" rx="22" fill="#f0f2f5"/>
+  <path d="M54 150c44-60 92 28 140-32 40-50 74-28 112-62" fill="none" stroke="#d9dde3" stroke-width="20" stroke-linecap="round"/>
+  <path d="M54 150c44-60 92 28 140-32 40-50 74-28 112-62" fill="none" stroke="#ffdf32" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="54" cy="150" r="18" fill="#16895f"/>
+  <circle cx="306" cy="56" r="18" fill="#d84d3f"/>
+  <rect x="138" y="92" width="70" height="38" rx="13" fill="#111"/>
+  <circle cx="156" cy="132" r="8" fill="#111"/>
+  <circle cx="190" cy="132" r="8" fill="#111"/>
+  <path d="M154 93h38l-7-15h-24l-7 15Z" fill="#ffdf32"/>
+</svg>
